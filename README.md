@@ -2,7 +2,11 @@
 
 A cute browser-based **3D screw puzzle** inspired by kids’ ASMR screwdriver games — free the green bear from the confetti parfait by unscrewing every bolt!
 
-## Play
+**Repo:** https://github.com/Koffeekinggamer/sweet-screw-puzzle
+
+Reference screenshots from the original inspiration: [`docs/reference-1.jpg`](docs/reference-1.jpg), [`docs/reference-2.jpg`](docs/reference-2.jpg).
+
+## Play locally
 
 ```bash
 npm install
@@ -16,6 +20,13 @@ Build for production:
 ```bash
 npm run build
 npm run preview
+```
+
+### GitHub Pages (optional)
+
+```bash
+npm run build
+# deploy the dist/ folder to GitHub Pages or any static host
 ```
 
 ## How to play
