@@ -1,7 +1,7 @@
 /** Match-3 inventory trays */
 
 export class Inventory {
-  constructor(trayCount = 2) {
+  constructor(trayCount = 4) {
     this.capacity = 3;
     this.trays = Array.from({ length: trayCount }, () => ({
       color: null,
@@ -16,7 +16,6 @@ export class Inventory {
     this.trays = this.trays.slice(0, n);
   }
 
-  /** Index of tray that would accept this color, or -1 */
   findTrayFor(color) {
     let idx = this.trays.findIndex(
       (t) => t.color === color && t.screws.length < this.capacity
@@ -31,7 +30,6 @@ export class Inventory {
     return this.findTrayFor(color) !== -1;
   }
 
-  /** Place a screw color. Returns { ok, clearedTrayIndex? } or { ok:false, reason } */
   tryPlace(color) {
     const idx = this.findTrayFor(color);
     if (idx === -1) {
@@ -50,16 +48,9 @@ export class Inventory {
     return { ok: true, clearedTrayIndex: null };
   }
 
-  isStuck(remainingColors) {
-    // Inventory full and no remaining screw can fit any tray
-    const hasEmpty = this.trays.some((t) => t.screws.length === 0);
-    if (hasEmpty) return false;
-    const openColors = new Set(
-      this.trays
-        .filter((t) => t.screws.length > 0 && t.screws.length < this.capacity)
-        .map((t) => t.color)
-    );
-    return !remainingColors.some((c) => openColors.has(c));
+  /** True if no remaining accessible color can go into any tray */
+  cannotPlaceAny(accessibleColors) {
+    return !accessibleColors.some((c) => this.canPlace(c));
   }
 
   snapshot() {

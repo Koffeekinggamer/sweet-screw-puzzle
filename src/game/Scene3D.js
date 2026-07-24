@@ -1,6 +1,10 @@
 import * as THREE from "three";
 import { createDessertGroup } from "./bearModel.js";
-import { placeScrews, animateScrewOut } from "./screws.js";
+import {
+  placeScrews,
+  animateScrewOut,
+  updateScrewAccessibility,
+} from "./screws.js";
 
 export class Scene3D {
   constructor(canvas) {
@@ -63,8 +67,8 @@ export class Scene3D {
     this._loop();
   }
 
-  /** Load level theme model + screws */
-  loadLevel(screwDefs, themeId = "parfait") {
+  /** Load level theme model + screws (layered stacks) */
+  loadLevel(screwDefs, themeId = "parfait", stackOpts = {}) {
     if (this.dessert) {
       this.stage.remove(this.dessert);
       this.dessert.traverse((o) => {
@@ -81,7 +85,7 @@ export class Scene3D {
     while (this.screwRoot.children.length) {
       this.screwRoot.remove(this.screwRoot.children[0]);
     }
-    this.screws = placeScrews(this.screwRoot, screwDefs);
+    this.screws = placeScrews(this.screwRoot, screwDefs, stackOpts);
     this.stage.rotation.set(0.12, 0.4, 0);
     return this.screws;
   }
@@ -94,20 +98,38 @@ export class Scene3D {
     return this.screws.filter((s) => !s.removed);
   }
 
+  getAccessible() {
+    return this.screws.filter((s) => !s.removed && s.accessible);
+  }
+
   pickScrew(clientX, clientY) {
     const rect = this.canvas.getBoundingClientRect();
     this.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     this.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
 
-    const meshes = this.getRemaining().flatMap((s) => {
+    // Prefer accessible screws in hit test
+    const accessible = this.getAccessible();
+    const meshes = accessible.flatMap((s) => {
       const list = [];
       s.mesh.traverse((o) => {
         if (o.isMesh) list.push(o);
       });
       return list;
     });
-    const hits = this.raycaster.intersectObjects(meshes, false);
+    let hits = this.raycaster.intersectObjects(meshes, false);
+
+    // If hit a buried screw, still resolve but mark not accessible
+    if (!hits.length) {
+      const all = this.getRemaining().flatMap((s) => {
+        const list = [];
+        s.mesh.traverse((o) => {
+          if (o.isMesh) list.push(o);
+        });
+        return list;
+      });
+      hits = this.raycaster.intersectObjects(all, false);
+    }
     if (!hits.length) return null;
     let obj = hits[0].object;
     while (obj && !obj.userData?.isScrew) obj = obj.parent;
@@ -120,31 +142,7 @@ export class Scene3D {
     screw.removed = true;
     await animateScrewOut(screw.mesh);
     this.screwRoot.remove(screw.mesh);
-  }
-
-  highlightColor(colorId) {
-    for (const s of this.screws) {
-      if (s.removed) continue;
-      const match = s.color === colorId;
-      s.mesh.scale.setScalar(match ? 1.12 : 0.92);
-      s.mesh.traverse((o) => {
-        if (o.isMesh && o.material && o.material.emissive) {
-          o.material.emissive = new THREE.Color(match ? 0x222222 : 0x000000);
-        }
-      });
-    }
-  }
-
-  clearHighlight() {
-    for (const s of this.screws) {
-      if (s.removed) continue;
-      s.mesh.scale.setScalar(1);
-      s.mesh.traverse((o) => {
-        if (o.isMesh && o.material && o.material.emissive) {
-          o.material.emissive = new THREE.Color(0x000000);
-        }
-      });
-    }
+    updateScrewAccessibility(this.screws);
   }
 
   _bindInput() {

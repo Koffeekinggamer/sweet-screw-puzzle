@@ -1,5 +1,6 @@
 import { Scene3D } from "./Scene3D.js";
 import { Inventory } from "./inventory.js";
+import { ScrewBuffer } from "./buffer.js";
 import { getLevel, LEVELS } from "./levels.js";
 import { colorOf } from "./colors.js";
 import { loadSave, completeLevel, resetSave } from "./save.js";
@@ -13,6 +14,7 @@ export class Game {
     this.busy = false;
     this.level = null;
     this.inventory = new Inventory(4);
+    this.buffer = new ScrewBuffer(5);
     this.removedCount = 0;
     this.totalScrews = 0;
     this.mode = "title";
@@ -31,7 +33,7 @@ export class Game {
 
       <div id="screen-title" class="screen">
         <div class="logo-title">Sweet Screw Puzzle</div>
-        <div class="logo-sub">Unscrew the treat · Free the cutie!</div>
+        <div class="logo-sub">Unscrew layers · Match trays · Don't fill the holder!</div>
         <button class="btn btn-primary" id="btn-play">Play</button>
         <button class="btn btn-secondary" id="btn-levels">Levels</button>
         <button class="btn btn-ghost" id="btn-reset" style="margin-top:20px">Reset Progress</button>
@@ -121,21 +123,27 @@ export class Game {
     this.busy = false;
     this.removedCount = 0;
     this.totalScrews = this.level.screws.length;
-    // Always 4 unlocked trays
     this.inventory = new Inventory(4);
+    this.buffer = new ScrewBuffer(5);
 
     this.screenTitle.classList.add("hidden");
     this.screenLevels.classList.add("hidden");
     this.modal.classList.add("hidden");
     this.hud.classList.remove("hidden");
 
-    this.scene.loadLevel(this.level.screws, this.level.theme || "parfait");
+    this.scene.loadLevel(
+      this.level.screws,
+      this.level.theme || "parfait",
+      this.level.stackOpts || {}
+    );
     this._renderHud();
-    this._showHint(this.level.hint || "Tap any screw!");
+    this._showHint(
+      this.level.hint ||
+        "Only top-layer screws! Match 3 in trays. Holder holds 5 — fill it and you lose."
+    );
   }
 
   _renderHud() {
-    // 4 unlocked, color-coded trays
     const traysHtml = this.inventory.trays
       .map((t, i) => {
         const accent = t.color
@@ -160,6 +168,18 @@ export class Game {
       })
       .join("");
 
+    // 5-slot overflow holder
+    const bufSlots = Array.from({ length: this.buffer.capacity }, (_, i) => {
+      const c = this.buffer.slots[i];
+      if (c) {
+        const css = colorOf(c).css;
+        return `<div class="buffer-slot filled" style="background:${css}"></div>`;
+      }
+      return `<div class="buffer-slot"></div>`;
+    }).join("");
+
+    const bufFull = this.buffer.isFull ? " buffer-full" : "";
+
     this.hud.innerHTML = `
       <div class="hud-top">
         <div style="display:flex;gap:10px;align-items:center">
@@ -173,7 +193,13 @@ export class Game {
         ${traysHtml}
       </div>
 
-      <div class="rotate-hint">Drag to spin · Tap any screw</div>
+      <div class="buffer-panel${bufFull}">
+        <div class="buffer-title">Holder ${this.buffer.count}/${this.buffer.capacity}</div>
+        <div class="buffer-slots">${bufSlots}</div>
+        <div class="buffer-warn">Fills up = lose!</div>
+      </div>
+
+      <div class="rotate-hint">Drag to spin · Only top-layer screws</div>
 
       <div class="screw-counter">
         <div class="mini-screw"></div>
@@ -195,8 +221,25 @@ export class Game {
     el.classList.add("show");
     clearTimeout(this._hintTimer);
     if (!keep) {
-      this._hintTimer = setTimeout(() => el.classList.remove("show"), 3200);
+      this._hintTimer = setTimeout(() => el.classList.remove("show"), 3500);
     }
+  }
+
+  /** Move as many buffer screws into trays as possible */
+  _flushBufferToTrays() {
+    let moved = true;
+    let clearedAny = false;
+    while (moved) {
+      moved = false;
+      for (const color of [...new Set(this.buffer.slots)]) {
+        if (this.inventory.canPlace(color) && this.buffer.takeColor(color)) {
+          const r = this.inventory.tryPlace(color);
+          moved = true;
+          if (r.clearedTrayIndex != null) clearedAny = true;
+        }
+      }
+    }
+    return clearedAny;
   }
 
   async _onSceneTap(x, y) {
@@ -204,56 +247,144 @@ export class Game {
     const screw = this.scene.pickScrew(x, y);
     if (!screw) return;
 
-    // No tool selection — tap any screw
-    if (!this.inventory.canPlace(screw.color)) {
-      this._showHint("Trays full! Match 3 of a color to clear space.");
-      this._openFailIfStuck();
+    if (!screw.accessible) {
+      this._showHint("Buried! Remove the screw on top of this stack first.");
+      return;
+    }
+
+    const canTray = this.inventory.canPlace(screw.color);
+    const canBuf = this.buffer.canAdd();
+
+    if (!canTray && !canBuf) {
+      this._lose(
+        "No room in trays or holder!",
+        "Clear matches earlier so trays open up — or avoid filling the 5-slot holder."
+      );
       return;
     }
 
     this.busy = true;
-    const preview = this.inventory.tryPlace(screw.color);
+    let wentToBuffer = false;
+    let clearedTray = null;
+
+    if (canTray) {
+      const preview = this.inventory.tryPlace(screw.color);
+      clearedTray = preview.clearedTrayIndex;
+    } else {
+      // Overflow into 5-slot holder
+      const b = this.buffer.tryAdd(screw.color);
+      wentToBuffer = true;
+      if (!b.ok) {
+        this.busy = false;
+        this._lose(
+          "Holder full!",
+          "The extra holder only holds 5 screws. Restart and plan your trays."
+        );
+        return;
+      }
+    }
+
     await this.scene.removeScrew(screw);
     this.removedCount += 1;
 
-    if (preview.clearedTrayIndex != null) {
+    // After tray clear, pull from buffer
+    if (clearedTray != null) {
+      this._flushBufferToTrays();
       this._showHint("Match! Tray cleared ✨");
-      this._popTray(preview.clearedTrayIndex);
+    } else if (wentToBuffer) {
+      this._showHint(
+        `In holder (${this.buffer.count}/5) — match trays to free space!`
+      );
+    }
+
+    // Lose immediately if holder filled to 5
+    if (this.buffer.isFull) {
+      this._renderHud();
+      this.busy = false;
+      this._lose(
+        "Holder full!",
+        "You filled all 5 holder slots. Restart the level and clear trays sooner."
+      );
+      return;
     }
 
     this._renderHud();
     this.busy = false;
 
-    if (this.removedCount >= this.totalScrews) {
-      this._onWin();
+    if (this.scene.getRemaining().length === 0) {
+      this._flushBufferToTrays();
+      this._renderHud();
+      if (this.buffer.count === 0) {
+        this._onWin();
+        return;
+      }
+      // Screws off the model but holder leftovers can't enter trays
+      const left = [...new Set(this.buffer.slots)];
+      if (this.inventory.cannotPlaceAny(left)) {
+        this._lose(
+          "Holder leftovers!",
+          "Screws left in the holder can't make tray matches. Restart and clear trays sooner."
+        );
+        return;
+      }
+    }
+
+    this._checkStuckOrLose();
+  }
+
+  _checkStuckOrLose() {
+    const accessible = this.scene.getAccessible();
+    if (accessible.length === 0 && this.scene.getRemaining().length > 0) {
+      // Shouldn't happen with stack rules
       return;
     }
 
-    this._openFailIfStuck();
-  }
+    const accessColors = accessible.map((s) => s.color);
+    const anyTrayMove = accessColors.some((c) => this.inventory.canPlace(c));
+    const anyBufMove = this.buffer.canAdd() && accessible.length > 0;
 
-  _popTray(index) {
-    requestAnimationFrame(() => {
-      const el = this.hud.querySelector(`[data-tray="${index}"]`);
-      if (el) el.classList.add("pop");
-    });
-  }
+    // Can still put something in buffer even if trays blocked
+    if (!anyTrayMove && !anyBufMove && accessible.length > 0) {
+      this._lose(
+        "No moves left!",
+        "No tray space for the exposed screws, and the holder is full. Restart the level."
+      );
+      return;
+    }
 
-  _openFailIfStuck() {
-    const remaining = this.scene.getRemaining().map((s) => s.color);
-    if (this.inventory.isStuck(remaining)) {
-      this._showModal({
-        stars: "💀",
-        title: "Trays Stuck!",
-        body: "No more moves — trays are full. Try again and clear matches sooner.",
-        primary: "Retry",
-        secondary: "Levels",
-        onPrimary: () => this.startLevel(this.level.id),
-      });
+    // Trays can't take any accessible screw AND buffer is full
+    if (
+      this.inventory.cannotPlaceAny(accessColors) &&
+      this.buffer.isFull &&
+      accessible.length > 0
+    ) {
+      this._lose(
+        "Stuck!",
+        "You can't place any more exposed screws into trays, and the holder is full."
+      );
     }
   }
 
+  _lose(title, body) {
+    this._showModal({
+      stars: "💀",
+      title,
+      body,
+      primary: "Retry Level",
+      secondary: "Levels",
+      onPrimary: () => this.startLevel(this.level.id),
+      onSecondary: () => this.showLevels(),
+    });
+  }
+
   _onWin() {
+    // Must clear buffer too
+    this._flushBufferToTrays();
+    if (this.buffer.count > 0 || this.scene.getRemaining().length > 0) {
+      this._checkStuckOrLose();
+      return;
+    }
+
     const empty =
       this.inventory.trays.filter((t) => t.screws.length === 0).length >=
       this.inventory.trays.length;
@@ -282,7 +413,7 @@ export class Game {
     this._showModal({
       stars: "⏸",
       title: "Paused",
-      body: `Level ${this.level.id} — ${this.removedCount}/${this.totalScrews} screws`,
+      body: `Level ${this.level.id} — ${this.removedCount}/${this.totalScrews} · Holder ${this.buffer.count}/5`,
       primary: "Resume",
       secondary: "Quit to Levels",
       onPrimary: () => {
