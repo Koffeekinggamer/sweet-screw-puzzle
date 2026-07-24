@@ -1,0 +1,19 @@
+{
+  "name": "sweet-screw-puzzle",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cute 3D screw puzzle web game — free the bear from the parfait!",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.1",
+    "vite": "^8.1.1"
+  }
+}
