@@ -1,21 +1,21 @@
 import { Scene3D } from "./Scene3D.js";
 import { Inventory } from "./inventory.js";
 import { getLevel, LEVELS } from "./levels.js";
-import { toolMatchesScrew, TOOL_DEFS, toolCss } from "./tools.js";
 import { colorOf } from "./colors.js";
 import { loadSave, completeLevel, resetSave } from "./save.js";
+
+const TRAY_PALETTE = ["pink", "blue", "green", "yellow"];
 
 export class Game {
   constructor(root) {
     this.root = root;
     this.save = loadSave();
-    this.selectedTool = null;
     this.busy = false;
     this.level = null;
-    this.inventory = new Inventory(2);
+    this.inventory = new Inventory(4);
     this.removedCount = 0;
     this.totalScrews = 0;
-    this.mode = "title"; // title | levels | play
+    this.mode = "title";
 
     this._buildDom();
     this.scene = new Scene3D(this.canvas);
@@ -31,7 +31,7 @@ export class Game {
 
       <div id="screen-title" class="screen">
         <div class="logo-title">Sweet Screw Puzzle</div>
-        <div class="logo-sub">Unscrew the parfait · Free the bear!</div>
+        <div class="logo-sub">Unscrew the treat · Free the cutie!</div>
         <button class="btn btn-primary" id="btn-play">Play</button>
         <button class="btn btn-secondary" id="btn-levels">Levels</button>
         <button class="btn btn-ghost" id="btn-reset" style="margin-top:20px">Reset Progress</button>
@@ -47,7 +47,7 @@ export class Game {
         <div class="modal">
           <div class="stars" id="modal-stars">★★★</div>
           <h2 id="modal-title">Level Clear!</h2>
-          <p id="modal-body">You freed the bear.</p>
+          <p id="modal-body">You freed the cutie.</p>
           <button class="btn btn-primary" id="modal-primary">Continue</button>
           <button class="btn btn-secondary" id="modal-secondary">Levels</button>
         </div>
@@ -121,62 +121,42 @@ export class Game {
     this.busy = false;
     this.removedCount = 0;
     this.totalScrews = this.level.screws.length;
-    this.inventory = new Inventory(this.level.trays);
-    this.selectedTool = this.level.tools[0];
+    // Always 4 unlocked trays
+    this.inventory = new Inventory(4);
 
     this.screenTitle.classList.add("hidden");
     this.screenLevels.classList.add("hidden");
     this.modal.classList.add("hidden");
     this.hud.classList.remove("hidden");
 
-    this.scene.loadScrews(this.level.screws);
+    this.scene.loadLevel(this.level.screws, this.level.theme || "parfait");
     this._renderHud();
-    this._showHint(this.level.hint || "Tap screws that match your tool!");
+    this._showHint(this.level.hint || "Tap any screw!");
   }
 
   _renderHud() {
+    // 4 unlocked, color-coded trays
     const traysHtml = this.inventory.trays
       .map((t, i) => {
+        const accent = t.color
+          ? colorOf(t.color)
+          : colorOf(TRAY_PALETTE[i % TRAY_PALETTE.length]);
+        const label = t.color ? colorOf(t.color).label : "Open";
         const dots = Array.from({ length: 3 }, (_, s) => {
           const filled = s < t.screws.length;
-          const col = filled ? colorOf(t.color).css : "";
+          const col = filled ? colorOf(t.color).css : "transparent";
           return `<div class="slot-dot ${filled ? "filled" : ""}" style="${
-            filled ? `background:${col}` : ""
+            filled
+              ? `background:${col};border-color:rgba(0,0,0,0.12)`
+              : `border-color:${accent.css}66;background:${accent.css}22`
           }"></div>`;
         }).join("");
         return `
-          <div class="tray" data-tray="${i}">
+          <div class="tray tray-color" data-tray="${i}"
+            style="border-color:${accent.css};background:linear-gradient(180deg,#fff,${accent.css}28)">
             <div class="tray-slots">${dots}</div>
-            <div class="tray-label">${t.color ? colorOf(t.color).label : "Tray"}</div>
+            <div class="tray-label" style="color:${accent.css}">${label}</div>
           </div>`;
-      })
-      .join("");
-
-    // Locked tray placeholders matching screenshots
-    const lockedSlots = Math.max(0, 4 - this.inventory.trays.length);
-    const lockedHtml = Array.from({ length: lockedSlots }, () => {
-      return `
-        <div class="tray locked">
-          <div class="tray-unlock">+ UNLOCK</div>
-          <div class="tray-label">Locked</div>
-        </div>`;
-    }).join("");
-
-    const toolsHtml = this.level.tools
-      .map((tid) => {
-        const def = TOOL_DEFS[tid];
-        const unlocked =
-          this.save.toolsUnlocked.includes(tid) || this.level.tools.includes(tid);
-        // Level tools are always usable in that level
-        const selected = this.selectedTool === tid;
-        const bg = toolCss(tid);
-        return `
-          <button class="tool-btn ${selected ? "selected" : ""} ${
-            unlocked ? "" : "locked"
-          }" data-tool="${tid}">
-            <div class="tool-icon" style="background:${bg}">${def?.icon || "🔧"}</div>
-            <div class="tool-name">${def?.name || tid}</div>
-          </button>`;
       })
       .join("");
 
@@ -190,15 +170,10 @@ export class Game {
       </div>
 
       <div class="inventory-rail">
-        ${lockedHtml}
         ${traysHtml}
       </div>
 
-      <div class="tools-rail">
-        ${toolsHtml}
-      </div>
-
-      <div class="rotate-hint">Drag to spin · Tap screws</div>
+      <div class="rotate-hint">Drag to spin · Tap any screw</div>
 
       <div class="screw-counter">
         <div class="mini-screw"></div>
@@ -209,17 +184,6 @@ export class Game {
     `;
 
     this.hud.querySelector("#btn-pause").onclick = () => this._pause();
-    this.hud.querySelectorAll(".tool-btn").forEach((btn) => {
-      btn.onclick = () => {
-        this.selectedTool = btn.dataset.tool;
-        this._renderHud();
-        const def = TOOL_DEFS[this.selectedTool];
-        if (def?.color) this.scene.highlightColor(def.color);
-        else this.scene.clearHighlight();
-      };
-    });
-
-    // restore hint if any
     if (this._lastHint) this._showHint(this._lastHint, true);
   }
 
@@ -240,12 +204,7 @@ export class Game {
     const screw = this.scene.pickScrew(x, y);
     if (!screw) return;
 
-    if (!toolMatchesScrew(this.selectedTool, screw)) {
-      this._showHint("Wrong tool! Pick the matching color tool.");
-      this._shakeScrew(screw);
-      return;
-    }
-
+    // No tool selection — tap any screw
     if (!this.inventory.canPlace(screw.color)) {
       this._showHint("Trays full! Match 3 of a color to clear space.");
       this._openFailIfStuck();
@@ -273,22 +232,7 @@ export class Game {
     this._openFailIfStuck();
   }
 
-  _shakeScrew(screw) {
-    const m = screw.mesh;
-    const base = m.rotation.z;
-    let t = 0;
-    const id = setInterval(() => {
-      t++;
-      m.rotation.z = base + Math.sin(t * 2) * 0.15;
-      if (t > 10) {
-        clearInterval(id);
-        m.rotation.z = base;
-      }
-    }, 30);
-  }
-
   _popTray(index) {
-    // visual handled on re-render; brief hint is enough
     requestAnimationFrame(() => {
       const el = this.hud.querySelector(`[data-tray="${index}"]`);
       if (el) el.classList.add("pop");
@@ -310,11 +254,10 @@ export class Game {
   }
 
   _onWin() {
-    const stars =
+    const empty =
       this.inventory.trays.filter((t) => t.screws.length === 0).length >=
-      this.inventory.trays.length
-        ? 3
-        : 2;
+      this.inventory.trays.length;
+    const stars = empty ? 3 : 2;
     this.save = completeLevel(this.level.id, stars);
     const next = this.level.id + 1;
     const hasNext = next <= LEVELS.length && next <= this.save.unlockedLevel;
@@ -322,7 +265,7 @@ export class Game {
     this._showModal({
       stars: "★".repeat(stars) + "☆".repeat(3 - stars),
       title: "Level Clear!",
-      body: `You freed the bear on Level ${this.level.id}. ${
+      body: `You cleared Level ${this.level.id}: ${this.level.name}. ${
         hasNext ? "Next level unlocked!" : "Great job!"
       }`,
       primary: hasNext ? "Next Level" : "Levels",

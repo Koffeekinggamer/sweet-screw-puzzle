@@ -13,9 +13,9 @@ fly orgs list
 echo ""
 echo "Creating org deploy token (pick org slug from list above)..."
 # Default to first non-header org, or PERSONAL
-ORG="${1:-}"
+ORG=personal
 if [ -z "$ORG" ]; then
-  ORG=$(fly orgs list 2>/dev/null | awk 'NR>1 && $1 !~ /NAME|----/ {print $1; exit}')
+  ORG=personal
 fi
 echo "Using org: $ORG"
 TOKEN=$(fly tokens create org -o "$ORG" --name "sweet-screw-puzzle-$(date +%s)" --expiry 2160h 2>&1 | tee /tmp/fly_token_out.txt | tail -n 1)

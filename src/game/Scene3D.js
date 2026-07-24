@@ -50,7 +50,7 @@ export class Scene3D {
     this.stage = new THREE.Group();
     this.scene.add(this.stage);
 
-    this.dessert = createDessertGroup();
+    this.dessert = createDessertGroup("parfait");
     this.stage.add(this.dessert);
 
     this.screwRoot = new THREE.Group();
@@ -63,14 +63,31 @@ export class Scene3D {
     this._loop();
   }
 
-  loadScrews(screwDefs) {
-    // Clear old
+  /** Load level theme model + screws */
+  loadLevel(screwDefs, themeId = "parfait") {
+    if (this.dessert) {
+      this.stage.remove(this.dessert);
+      this.dessert.traverse((o) => {
+        if (o.geometry) o.geometry.dispose?.();
+        if (o.material) {
+          if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose?.());
+          else o.material.dispose?.();
+        }
+      });
+    }
+    this.dessert = createDessertGroup(themeId);
+    this.stage.add(this.dessert);
+
     while (this.screwRoot.children.length) {
       this.screwRoot.remove(this.screwRoot.children[0]);
     }
     this.screws = placeScrews(this.screwRoot, screwDefs);
     this.stage.rotation.set(0.12, 0.4, 0);
     return this.screws;
+  }
+
+  loadScrews(screwDefs) {
+    return this.loadLevel(screwDefs, "parfait");
   }
 
   getRemaining() {
